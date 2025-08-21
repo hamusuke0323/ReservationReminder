@@ -153,7 +153,7 @@ public final class CampusWeb implements AutoCloseable {
                     .GET()
                     .build(), HttpResponse.BodyHandlers.ofString());
 
-            return RoomReservations.parseFrom(room, Jsoup.parse(status.body()).body());
+            return RoomReservations.parseFrom(room, date, Jsoup.parse(status.body()).body());
         } catch (IOException | InterruptedException e) {
             throw new QueryFailedException(e);
         }

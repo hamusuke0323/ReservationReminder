@@ -131,7 +131,7 @@ public final class ReservationReminder extends ListenerAdapter {
             }
 
             final var reservations = this.campusWeb.queryRoomReservation(ROOM, date.toLocalDate());
-            final var reservation = reservations.cannotReserve(date.toLocalTime(), time.toLocalTime());
+            final var reservation = reservations.cannotReserve(date, time);
             if (reservation != null) {
                 ch.sendMessage("- " + line + "\nこの時間は既に埋まっています。\n理由: " + reservation.reason() + "\n時間: " + reservation.startTime().format(TIME_TO_STRING) + "-" + reservation.endTime().format(TIME_TO_STRING)).queue();
                 return;
