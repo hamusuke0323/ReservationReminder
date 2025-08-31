@@ -35,6 +35,10 @@ public final class BusinessDay {
         return date;
     }
 
+    private void clearOldHolidays() {
+        this.holidayMap.entrySet().removeIf(e -> LocalDate.now().getYear() - e.getKey() > 0);
+    }
+
     public boolean isHoliday(final LocalDate date) {
         if (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY) {
             return true;
@@ -56,6 +60,7 @@ public final class BusinessDay {
             e.printStackTrace();
         }
 
+        this.clearOldHolidays();
         if (this.holidayMap.containsKey(date.getYear())) {
             return this.holidayMap.get(date.getYear()).contains(date);
         }

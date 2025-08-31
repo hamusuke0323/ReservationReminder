@@ -2,6 +2,9 @@ package com.hamusuke.reminder;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.hamusuke.reminder.throwable.LoginFailedException;
 import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.web.CampusWeb;
@@ -9,12 +12,16 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
+import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
+import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.OptionMapping;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.components.text.TextInputStyle;
 import net.dv8tion.jda.api.interactions.modals.Modal;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -22,6 +29,10 @@ import net.dv8tion.jda.internal.interactions.component.TextInputImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -34,6 +45,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public final class ReservationReminder extends ListenerAdapter {
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/M/d H:mm");
@@ -42,6 +54,10 @@ public final class ReservationReminder extends ListenerAdapter {
     private static final DateTimeFormatter TIME_TO_STRING = DateTimeFormatter.ofPattern("HH:mm");
     private static final String ROOM = "F1会議室";
     private static final ScheduledExecutorService TASK_REMOVER = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "Task Remover Thread"));
+    private static final Function<String, String> FIRST_REMIND_MSG_FACTORY = roleId -> "<@&" + roleId + "> 予約書を書きに行ってください。";
+    private static final Function<String, String> SECOND_REMIND_MSG_FACTORY = roleId -> "<@&" + roleId + "> 予約書を受け取り警備室に提出しに行ってください。";
+    private static final String SAVE_FILE_NAME = "reservation_reminders.json";
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().excludeFieldsWithoutExposeAnnotation().create();
     private final JDA jda;
     private final Map<String, Consumer<SlashCommandInteractionEvent>> commands;
     @Nullable
@@ -64,6 +80,19 @@ public final class ReservationReminder extends ListenerAdapter {
         this.jda = JDABuilder.createLight(token, EnumSet.of(GatewayIntent.GUILD_MESSAGES, GatewayIntent.MESSAGE_CONTENT))
                 .addEventListeners(this)
                 .build();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Saving reminders...");
+            this.saveReminders();
+            System.out.println("Done");
+            System.out.println("Killing Reminder Tasks...");
+            this.tasks.values().forEach(ReminderTask::kill);
+            System.out.println("Done");
+            System.out.println("Shutting down...");
+            this.jda.shutdown();
+            System.out.println("Done");
+        }, "Reservation Reminder Shutdown Thread"));
+
         this.channelId = channelId;
         this.roleId = roleId;
 
@@ -71,18 +100,86 @@ public final class ReservationReminder extends ListenerAdapter {
                 Commands.slash("login", "学務システムにログイン"),
                 Commands.slash("logout", "ログアウト"),
                 Commands.slash("chtime", "リマインドする日時を変更します")
-                        .addOption(OptionType.STRING, "id", "リマインドID", true)
+                        .addOption(OptionType.STRING, "id", "リマインドID", true, true)
                         .addOption(OptionType.STRING, "first", "最初のリマインド日 (年/月/日)", true)
-                        .addOption(OptionType.STRING, "second", "2番目のリマインド日（省略すると最初のリマインド日+1営業日になります）")
+                        .addOption(OptionType.STRING, "second", "2番目のリマインド日（省略すると最初のリマインド日+1営業日になります）"),
+                Commands.slash("list", "リマインド一覧を表示します"),
+                Commands.slash("clear", "指定したリマインドを解除します")
+                        .addOption(OptionType.STRING, "id", "リマインドID", true, true)
         ).queue();
 
         final Map<String, Consumer<SlashCommandInteractionEvent>> map = Maps.newHashMap();
         map.put("login", this::login);
         map.put("logout", this::logout);
         map.put("chtime", this::chtime);
+        map.put("list", this::list);
+        map.put("clear", this::clear);
         this.commands = ImmutableMap.copyOf(map);
 
         TASK_REMOVER.scheduleAtFixedRate(this::removeDiedTasks, 0L, 1L, TimeUnit.DAYS);
+    }
+
+    @Override
+    public void onCommandAutoCompleteInteraction(@NotNull CommandAutoCompleteInteractionEvent event) {
+        if (!event.getName().equals("chtime") && !event.getName().equals("clear")) {
+            return;
+        }
+
+        if (!event.getFocusedOption().getName().equals("id")) {
+            return;
+        }
+
+        event.replyChoices(this.tasks.entrySet().stream()
+                .filter(e -> event.getFocusedOption().getValue().isBlank()
+                        || e.getValue().getReservationDuration().contains(event.getFocusedOption().getValue())
+                        || e.getKey().toString().startsWith(event.getFocusedOption().getValue()))
+                .limit(OptionData.MAX_CHOICES)
+                .map(e ->
+                        new Command.Choice(e.getValue().getReservationDuration() + "の予約", e.getKey().toString())
+                ).toList()
+        ).queue();
+    }
+
+    @Override
+    public void onReady(@NotNull ReadyEvent event) {
+        this.loadReminders();
+    }
+
+    private synchronized void loadReminders() {
+        final var file = new File(SAVE_FILE_NAME);
+        if (!file.exists()) {
+            return;
+        }
+
+        try {
+            final var obj = GSON.fromJson(new FileReader(SAVE_FILE_NAME, StandardCharsets.UTF_8), JsonObject.class);
+            if (obj == null) {
+                return;
+            }
+
+            for (final var e : obj.entrySet()) {
+                final var id = UUID.fromString(e.getKey());
+                this.tasks.put(id, ReminderTask.from(e.getValue().getAsJsonObject(), this.jda, this.channelId, FIRST_REMIND_MSG_FACTORY.apply(this.roleId), SECOND_REMIND_MSG_FACTORY.apply(this.roleId)));
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to load reservation reminders: " + e.getMessage());
+        }
+    }
+
+    private synchronized void saveReminders() {
+        this.removeDiedTasks();
+        try (final var w = GSON.newJsonWriter(new FileWriter(SAVE_FILE_NAME, StandardCharsets.UTF_8))) {
+            w.beginObject();
+
+            for (final var e : this.tasks.entrySet()) {
+                w.name(e.getKey().toString());
+                e.getValue().writeTo(w);
+            }
+
+            w.endObject();
+        } catch (Exception e) {
+            System.err.println("Failed to save reservation reminders: " + e.getMessage());
+        }
     }
 
     private void removeDiedTasks() {
@@ -106,8 +203,13 @@ public final class ReservationReminder extends ListenerAdapter {
         }
 
         final var lines = event.getMessage().getContentStripped().split("\n");
+        final int size = this.tasks.size();
         for (final var line : lines) {
-            this.scheduleReminder(line, ch);
+            this.scheduleReminder(line.trim(), ch);
+        }
+
+        if (this.tasks.size() > size) {
+            this.saveReminders();
         }
     }
 
@@ -116,9 +218,9 @@ public final class ReservationReminder extends ListenerAdapter {
             return;
         }
 
-        final var dateTime = line.trim().split("-");
+        final var dateTime = line.split("-");
         if (dateTime.length != 2) {
-            ch.sendMessage("不正なフォーマットです: " + line + "\n例: 2025/8/21 10:00-12:00").queue();
+            ch.sendMessage(":ng: 不正なフォーマットです: " + line + "\n例: 2025/8/21 10:00-12:00").queue();
             return;
         }
 
@@ -126,14 +228,14 @@ public final class ReservationReminder extends ListenerAdapter {
             final var date = LocalDateTime.parse(dateTime[0], FORMATTER);
             final var time = LocalDateTime.of(date.toLocalDate(), LocalTime.parse(dateTime[1], TIME_FORMATTER));
             if (date.isAfter(time)) {
-                ch.sendMessage("不正な日時の範囲です: " + line).queue();
+                ch.sendMessage(":ng: 不正な日時の範囲です: " + line).queue();
                 return;
             }
 
             final var reservations = this.campusWeb.queryRoomReservation(ROOM, date.toLocalDate());
             final var reservation = reservations.cannotReserve(date, time);
             if (reservation != null) {
-                ch.sendMessage("- " + line + "\nこの時間は既に埋まっています。\n理由: " + reservation.reason() + "\n時間: " + reservation.startTime().format(TIME_TO_STRING) + "-" + reservation.endTime().format(TIME_TO_STRING)).queue();
+                ch.sendMessage("## :u6e80: " + line + "\nこの時間は既に埋まっています。\n理由: " + reservation.reason() + "\n時間: " + reservation.startTime().format(TIME_TO_STRING) + "-" + reservation.endTime().format(TIME_TO_STRING)).queue();
                 return;
             }
 
@@ -141,12 +243,15 @@ public final class ReservationReminder extends ListenerAdapter {
             final var second = this.businessDay.getBusinessDayAfter(first.toLocalDate(), 1).atTime(12, 0);
             final var id = UUID.randomUUID();
 
-            this.tasks.put(id, new ReminderTask(this.jda, this.channelId, "<@&" + this.roleId + "> 予約書を書きに行ってください。", "<@&" + this.roleId + "> 予約書を受け取り警備室に提出しに行ってください。", first, second));
-            ch.sendMessage("## " + line + "\nこの時間は予約できます（現在時点）。\nリマインドを登録しました:\n- 最初のリマインド日: " + first.format(FORMATTER) + "\n- 2番目のリマインド日: " + second.format(FORMATTER) + "\n- リマインドID: `" + id + "`").queue();
+            final var task = new ReminderTask(this.jda, this.channelId, line,
+                    FIRST_REMIND_MSG_FACTORY.apply(this.roleId),
+                    SECOND_REMIND_MSG_FACTORY.apply(this.roleId), first, second);
+            this.tasks.put(id, task);
+            ch.sendMessage("## :white_check_mark: " + line + "\nこの時間は予約できます（現在時点）。\nリマインドを登録しました:\n" + task + "\n- リマインドID: `" + id + "`").queue();
         } catch (DateTimeParseException e) {
-            ch.sendMessage("不正なフォーマットです: " + line + "\n例: 2025/8/21 10:00-12:00").queue();
+            ch.sendMessage(":ng: 不正なフォーマットです: " + line + "\n例: 2025/8/21 10:00-12:00").queue();
         } catch (QueryFailedException e) {
-            ch.sendMessage("学務システムへのアクセスに失敗しました").queue();
+            ch.sendMessage(":x: 学務システムへのアクセスに失敗しました").queue();
         }
     }
 
@@ -154,6 +259,11 @@ public final class ReservationReminder extends ListenerAdapter {
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (!this.commands.containsKey(event.getName())) {
             event.reply("不明なコマンドです").setEphemeral(true).queue();
+            return;
+        }
+
+        if (!this.channelId.equals(event.getChannelId())) {
+            event.reply("指定されたチャンネル外からコマンドを送信することはできません。").setEphemeral(true).queue();
             return;
         }
 
@@ -206,7 +316,7 @@ public final class ReservationReminder extends ListenerAdapter {
         final var hook = event.getHook();
 
         LocalDateTime firstTime;
-        LocalDateTime secondTime = null;
+        LocalDateTime secondTime;
         try {
             firstTime = LocalDate.parse(first, DATE_FORMATTER).atTime(9, 0);
             if (second != null) {
@@ -221,12 +331,65 @@ public final class ReservationReminder extends ListenerAdapter {
 
         final var old = this.tasks.remove(uuid);
         old.kill();
-        this.tasks.put(uuid, new ReminderTask(this.jda, this.channelId, old.getMessage(), old.getMessage2(), firstTime, secondTime));
+        final var newTask = new ReminderTask(this.jda, this.channelId, old.getReservationDuration(), old.getMessage(), old.getMessage2(), firstTime, secondTime);
+        this.tasks.put(uuid, newTask);
 
-        hook.sendMessage("リマインドID: `" + uuid + "` の日付を以下のように変更しました:\n- 最初のリマインド日: " + firstTime.format(FORMATTER) + "\n- 2番目のリマインド: " + secondTime.format(FORMATTER)).queue();
+        hook.sendMessage(old.getReservationDuration() + "の予約のためのリマインド日時を以下のように変更しました:\n" + newTask).queue();
+        this.saveReminders();
+    }
+
+    private void list(SlashCommandInteractionEvent event) {
+        if (this.tasks.isEmpty()) {
+            event.reply("リマインドはありません。").queue();
+            return;
+        }
+
+        final var b = new StringBuilder("リマインド一覧\n");
+        for (final var entry : this.tasks.entrySet()) {
+            b.append("## ")
+                    .append(entry.getValue().getReservationDuration())
+                    .append("\n")
+                    .append(entry.getValue())
+                    .append("\n")
+                    .append("- リマインドID: `")
+                    .append(entry.getKey())
+                    .append("`\n");
+        }
+
+        event.reply(b.toString()).queue();
+    }
+
+    private void clear(SlashCommandInteractionEvent event) {
+        final var id = event.getOption("id", OptionMapping::getAsString);
+        if (id == null) {
+            event.reply("ID or first was not specified").setEphemeral(true).queue();
+            return;
+        }
+
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            event.reply("不正なIDです。").setEphemeral(true).queue();
+            return;
+        }
+
+        if (!this.tasks.containsKey(uuid)) {
+            event.reply("見つかりませんでした。IDを確認してください。").setEphemeral(true).queue();
+            return;
+        }
+
+        final var removed = this.tasks.remove(uuid);
+        removed.kill();
+        event.reply(removed.getReservationDuration() + "の予約のためのリマインドを解除しました。").queue();
+        this.saveReminders();
     }
 
     private void login(SlashCommandInteractionEvent event) {
+        if (event.getUser().isBot()) {
+            return;
+        }
+
         var userId = event.getUser().getId();
         event.replyModal(Modal.create(userId + ":login", "ログイン")
                 .addActionRow(new TextInputImpl("sid", TextInputStyle.SHORT, "ユーザー名", -1, -1, true, null, "ユーザー名"))

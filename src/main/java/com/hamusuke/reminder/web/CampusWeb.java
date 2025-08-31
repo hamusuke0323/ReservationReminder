@@ -3,7 +3,6 @@ package com.hamusuke.reminder.web;
 import com.hamusuke.reminder.throwable.LoginFailedException;
 import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.util.Either;
-import com.hamusuke.reminder.util.Util;
 import com.hamusuke.reminder.web.reservation.RoomReservations;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -53,7 +52,7 @@ public final class CampusWeb implements AutoCloseable {
 
     @Override
     public void close() {
-        Util.shutdownExecutor(this.executor);
+        this.executor.shutdownNow();
     }
 
     /**

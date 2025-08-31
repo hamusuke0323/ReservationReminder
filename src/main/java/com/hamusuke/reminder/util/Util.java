@@ -1,21 +1,14 @@
 package com.hamusuke.reminder.util;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 public class Util {
-    public static void shutdownExecutor(final ExecutorService e) {
-        e.shutdown();
+    public static String toTimestampRelative(final LocalDateTime time) {
+        return toTimestampFormat(time, "R");
+    }
 
-        boolean f;
-        try {
-            f = e.awaitTermination(3L, TimeUnit.SECONDS);
-        } catch (InterruptedException ex) {
-            f = false;
-        }
-
-        if (!f) {
-            e.shutdownNow();
-        }
+    public static String toTimestampFormat(final LocalDateTime time, final String format) {
+        return "<t:" + time.atZone(ZoneId.systemDefault()).toEpochSecond() + ":" + format + ">";
     }
 }
