@@ -7,8 +7,4 @@ public class QueryFailedException extends RuntimeException {
     public QueryFailedException(Throwable cause) {
         super(cause);
     }
-
-    public QueryFailedException(String message) {
-        super(message);
-    }
 }

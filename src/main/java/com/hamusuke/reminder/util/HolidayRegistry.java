@@ -1,4 +1,4 @@
-package com.hamusuke.reminder;
+package com.hamusuke.reminder.util;
 
 import com.google.common.collect.Maps;
 import com.google.gson.Gson;
@@ -14,11 +14,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public final class BusinessDay {
+public final class HolidayRegistry {
+    public static final HolidayRegistry INSTANCE = new HolidayRegistry();
     private static final Gson GSON = new Gson();
     private static final String HOLIDAYS_API = "https://holidays-jp.github.io/api/v1/%d/date.json";
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private final Map<Integer, Set<LocalDate>> holidayMap = Maps.newConcurrentMap();
+
+    private HolidayRegistry() {
+    }
 
     public LocalDate getBusinessDayAfter(final LocalDate base, final int days) {
         if (days == 0) {
@@ -49,22 +53,26 @@ public final class BusinessDay {
             return false;
         }
 
-        if (this.holidayMap.containsKey(date.getYear())) {
-            return this.holidayMap.get(date.getYear()).contains(date);
-        }
-
-        try (final var isr = new InputStreamReader(new URL(HOLIDAYS_API.formatted(date.getYear())).openStream(), StandardCharsets.UTF_8)) {
-            final var obj = GSON.fromJson(isr, JsonObject.class);
-            this.holidayMap.put(date.getYear(), obj.keySet().stream().map(k -> LocalDate.parse(k, FORMATTER)).collect(Collectors.toUnmodifiableSet()));
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
-        this.clearOldHolidays();
+        this.registerHolidaysIfAbsent(date.getYear());
         if (this.holidayMap.containsKey(date.getYear())) {
             return this.holidayMap.get(date.getYear()).contains(date);
         }
 
         return false;
+    }
+
+    private void registerHolidaysIfAbsent(final int year) {
+        if (this.holidayMap.containsKey(year)) {
+            return;
+        }
+
+        try (final var isr = new InputStreamReader(new URL(HOLIDAYS_API.formatted(year)).openStream(), StandardCharsets.UTF_8)) {
+            final var obj = GSON.fromJson(isr, JsonObject.class);
+            this.holidayMap.put(year, obj.keySet().stream().map(k -> LocalDate.parse(k, FORMATTER)).collect(Collectors.toUnmodifiableSet()));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        this.clearOldHolidays();
     }
 }
