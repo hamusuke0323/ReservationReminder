@@ -34,7 +34,10 @@ public final class CampusWeb implements AutoCloseable {
     private static final String SQUARE_PATH = MID_PATH + "/campussquare.do";
     private static final String ROOM_RESERVATION_FLOW_ID = "KHW0001300-flow";
     private static final String MEETING_ROOM_GROUP_CODE = "04";
-    private static final DateTimeFormatter TO_STRING = DateTimeFormatter.ofPattern("yyyy/MM/dd(E)");
+    private static final DateTimeFormatter DISPLAY_DATE = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter YEAR = DateTimeFormatter.ofPattern("yyyy");
+    private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("MM");
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd");
     private static final String CACHE_KEY = "key";
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     @Nullable
@@ -178,7 +181,7 @@ public final class CampusWeb implements AutoCloseable {
         try {
             final var location = this.getLocation(HOST.resolve(SQUARE_PATH), builder -> {
                 builder.header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-                final var body = "_eventId=searchShow&_flowExecutionKey=%s&shozokuCode=&shisetsuGroupCd=%s&tatemonoCd=&displayDateStr=%s".formatted(this.getFlowExecutionKey(), MEETING_ROOM_GROUP_CODE, date.format(TO_STRING));
+                final var body = "_eventId=show&_flowExecutionKey=%s&shozokuCode=&shisetsuGroupCd=%s&tatemonoCd=&displayDate=%s&displayDate_year=%s&displayDate_month=%s&displayDate_day=%s".formatted(this.getFlowExecutionKey(), MEETING_ROOM_GROUP_CODE, date.format(DISPLAY_DATE), date.format(YEAR), date.format(MONTH), date.format(DAY));
                 debugProfiler.appendLine("Request body: " + body);
                 builder.POST(HttpRequest.BodyPublishers.ofString(body));
             }).getRight();
