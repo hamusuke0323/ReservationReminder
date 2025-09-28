@@ -1,5 +1,8 @@
 package com.hamusuke.reminder.web;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.hamusuke.reminder.profiler.DebugProfiler;
 import com.hamusuke.reminder.throwable.LoginFailedException;
 import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.util.Either;
@@ -32,11 +35,14 @@ public final class CampusWeb implements AutoCloseable {
     private static final String ROOM_RESERVATION_FLOW_ID = "KHW0001300-flow";
     private static final String MEETING_ROOM_GROUP_CODE = "04";
     private static final DateTimeFormatter TO_STRING = DateTimeFormatter.ofPattern("yyyy/MM/dd(E)");
+    private static final String CACHE_KEY = "key";
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     @Nullable
     private ScheduledFuture<?> task;
     private final HttpClient client;
-    private String curExecutionKey = "";
+    private final Cache<String, String> executionKeyCache = CacheBuilder.newBuilder()
+            .expireAfterWrite(10, TimeUnit.MINUTES)
+            .build();
 
     static {
         try {
@@ -130,41 +136,76 @@ public final class CampusWeb implements AutoCloseable {
         return Jsoup.parse(rsp.body());
     }
 
-    public RoomReservations queryRoomReservation(final String room, final LocalDate date) throws QueryFailedException {
+    private static String parseExecutionKey(final String url) {
+        final var split = url.split("_flowExecutionKey=");
+        if (split.length < 2) {
+            return "";
+        }
+
+        final int ampersand = split[1].indexOf('&');
+        if (ampersand < 0) {
+            return split[1];
+        }
+
+        return split[1].substring(0, ampersand);
+    }
+
+    private String getFlowExecutionKey() {
+        final var k = this.executionKeyCache.getIfPresent(CACHE_KEY);
+        if (k != null) {
+            return k;
+        }
+
         try {
             final var loc = this.getLocation(HOST.resolve(SQUARE_PATH + "?_flowId=" + ROOM_RESERVATION_FLOW_ID), HttpRequest.Builder::GET).getRight();
-            if (loc.isEmpty()) {
-                throw new QueryFailedException();
+            final String key;
+            if (loc.isEmpty() || (key = parseExecutionKey(loc.get())).isBlank()) {
+                throw new QueryFailedException("Could not get flow execution key.");
             }
 
-            this.setExecutionKey(loc.get());
-            final var loc2 = this.getLocation(HOST.resolve(SQUARE_PATH), builder -> {
-                builder.header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-                builder.POST(HttpRequest.BodyPublishers.ofString("_eventId=searchShow&_flowExecutionKey=%s&shozokuCode=&shisetsuGroupCd=%s&tatemonoCd=&displayDateStr=%s".formatted(this.curExecutionKey, MEETING_ROOM_GROUP_CODE, TO_STRING.format(date))));
-            }).getRight();
-
-            if (loc2.isEmpty()) {
-                throw new QueryFailedException();
-            }
-
-            final var status = this.client.send(HttpRequest.newBuilder()
-                    .uri(HOST.resolve(loc2.get()))
-                    .GET()
-                    .build(), HttpResponse.BodyHandlers.ofString());
-
-            return RoomReservations.parseFrom(room, date, Jsoup.parse(status.body()).body());
+            this.cacheExecutionKey(key);
+            return key;
         } catch (IOException | InterruptedException e) {
             throw new QueryFailedException(e);
         }
     }
 
-    private void setExecutionKey(String url) {
-        var split = url.split("_flowExecutionKey=");
-        if (split.length < 2) {
-            return;
-        }
+    private void cacheExecutionKey(final String key) {
+        this.executionKeyCache.put(CACHE_KEY, key);
+    }
 
-        this.curExecutionKey = split[1];
+    public RoomReservations queryRoomReservation(final String room, final LocalDate date, final DebugProfiler debugProfiler) throws QueryFailedException {
+        try {
+            final var location = this.getLocation(HOST.resolve(SQUARE_PATH), builder -> {
+                builder.header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                final var body = "_eventId=searchShow&_flowExecutionKey=%s&shozokuCode=&shisetsuGroupCd=%s&tatemonoCd=&displayDateStr=%s".formatted(this.getFlowExecutionKey(), MEETING_ROOM_GROUP_CODE, date.format(TO_STRING));
+                debugProfiler.appendLine("Request body: " + body);
+                builder.POST(HttpRequest.BodyPublishers.ofString(body));
+            }).getRight();
+
+            final String newKey;
+            if (location.isEmpty() || (newKey = parseExecutionKey(location.get())).isBlank()) {
+                throw new QueryFailedException();
+            }
+
+            this.cacheExecutionKey(newKey);
+            final var uri = HOST.resolve(location.get());
+            debugProfiler.appendLine("Response URL: " + uri.toURL());
+            final var status = this.client.send(HttpRequest.newBuilder()
+                    .uri(uri)
+                    .GET()
+                    .build(), HttpResponse.BodyHandlers.ofString());
+
+            debugProfiler.appendLine("Response body: ");
+            debugProfiler.appendLine("```html");
+            debugProfiler.appendLine(status.body());
+            debugProfiler.appendLine("```");
+            final var result = RoomReservations.parseFrom(room, date, Jsoup.parse(status.body()).body());
+            debugProfiler.appendLine("Reservations: " + result.reservations());
+            return result;
+        } catch (IOException | InterruptedException e) {
+            throw new QueryFailedException(e);
+        }
     }
 
     private Either<Document, String> getLocation(URI uri, Consumer<HttpRequest.Builder> builderTinkerer) throws IOException, InterruptedException {

@@ -4,6 +4,7 @@ import com.hamusuke.reminder.command.Commands;
 import com.hamusuke.reminder.event.EventListener;
 import com.hamusuke.reminder.event.ReminderScheduler;
 import com.hamusuke.reminder.modal.Modals;
+import com.hamusuke.reminder.profiler.DebugProfiler;
 import com.hamusuke.reminder.reminders.ReminderTasks;
 import com.hamusuke.reminder.web.CampusWeb;
 import net.dv8tion.jda.api.JDA;
@@ -23,6 +24,7 @@ public final class ReservationReminder {
     private final Commands commands = new Commands();
     private final Modals modals = new Modals();
     private final ReminderTasks reminderTasks = new ReminderTasks();
+    private final DebugProfiler debugProfiler = new DebugProfiler();
 
     ReservationReminder(final String token, final String channelId, final String roleId) {
         this.channelId = channelId;
@@ -77,6 +79,10 @@ public final class ReservationReminder {
 
     public ReminderTasks getReminderTasks() {
         return this.reminderTasks;
+    }
+
+    public DebugProfiler getDebugProfiler() {
+        return this.debugProfiler;
     }
 
     public Commands getCommands() {

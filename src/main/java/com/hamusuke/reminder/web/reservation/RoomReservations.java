@@ -1,5 +1,6 @@
 package com.hamusuke.reminder.web.reservation;
 
+import com.hamusuke.reminder.throwable.QueryFailedException;
 import org.jetbrains.annotations.Nullable;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
@@ -16,6 +17,10 @@ public record RoomReservations(String roomName, List<RoomReservation> reservatio
 
     public static RoomReservations parseFrom(final String roomName, final LocalDate date, final Element body) {
         final var tds = body.select("td");
+        if (tds.isEmpty()) {
+            throw new QueryFailedException("query td returned empty table!");
+        }
+
         List<Node> f1MeetingRoom = new ArrayList<>();
         for (final var td : tds) {
             if (td.text().equalsIgnoreCase(roomName) && td.parent() != null) {

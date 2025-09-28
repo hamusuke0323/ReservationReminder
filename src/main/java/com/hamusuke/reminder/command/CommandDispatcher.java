@@ -29,12 +29,13 @@ public final class CommandDispatcher {
             return;
         }
 
-        if (!context.reservationReminder().getChannelId().equals(event.getChannelId())) {
+        final var command = this.commands.get(event.getName());
+        if (command.shouldExecuteInSpecifiedChannel() && !context.reservationReminder().getChannelId().equals(event.getChannelId())) {
             event.reply("指定されたチャンネル外からコマンドを送信することはできません。").setEphemeral(true).queue();
             return;
         }
 
-        this.commands.get(event.getName()).execute(context);
+        command.execute(context);
     }
 
     public void replyAutoCompleteChoices(final CommandAutoCompleteInteractionEvent event, final ReservationReminder reservationReminder) {

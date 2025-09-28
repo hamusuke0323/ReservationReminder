@@ -17,4 +17,8 @@ public interface Command {
     default Collection<net.dv8tion.jda.api.interactions.commands.Command.Choice> getChoices(final CommandAutoCompleteInteractionEvent event, final ReservationReminder reservationReminder) {
         return Collections.emptyList();
     }
+
+    default boolean shouldExecuteInSpecifiedChannel() {
+        return true;
+    }
 }
