@@ -3,7 +3,11 @@ package com.hamusuke.reminder.util;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
-public class Util {
+public class DiscordChatFormatUtil {
+    public static String toMentionFormat(final String roleId) {
+        return "<@&" + roleId + ">";
+    }
+
     public static String toTimestampRelative(final LocalDateTime time) {
         return toTimestampFormat(time, "R");
     }
