@@ -3,15 +3,12 @@ package com.hamusuke.reminder.event;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.RateLimiter;
 import com.hamusuke.reminder.ReservationReminder;
-import com.hamusuke.reminder.profiler.DebugProfiler;
 import com.hamusuke.reminder.reminders.FriendlyReminderMessage;
-import com.hamusuke.reminder.reminders.ReminderTasks;
 import com.hamusuke.reminder.reminders.TwiceRemindTask;
 import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.util.DiscordChatFormatUtil;
 import com.hamusuke.reminder.util.HolidayRegistry;
 import com.hamusuke.reminder.web.CampusWeb;
-import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
@@ -45,26 +42,17 @@ public final class ReminderScheduler extends ListenerAdapter {
         return "インターバル... " + DiscordChatFormatUtil.toTimestampRelative(intervalEndsAt) + "に再開";
     };
     private final ReservationReminder reservationReminder;
-    private final JDA jda;
-    private final String channelId;
-    private final String roleId;
-    private final ReminderTasks reminderTasks;
-    private final DebugProfiler debugProfiler;
     private final AtomicBoolean lock = new AtomicBoolean();
 
     public ReminderScheduler(final ReservationReminder reservationReminder) {
         this.reservationReminder = reservationReminder;
-        this.jda = reservationReminder.getJDA();
-        this.channelId = reservationReminder.getChannelId();
-        this.roleId = reservationReminder.getRoleId();
-        this.reminderTasks = reservationReminder.getReminderTasks();
-        this.debugProfiler = reservationReminder.getDebugProfiler();
     }
 
     @Override
     public synchronized void onMessageReceived(@NotNull MessageReceivedEvent event) {
+        final var channelId = this.reservationReminder.getChannelId();
         final var ch = event.getChannel();
-        if (event.getAuthor().isBot() || event.getAuthor().isSystem() || !ch.getId().equals(this.channelId)) {
+        if (event.getAuthor().isBot() || event.getAuthor().isSystem() || !ch.getId().equals(channelId)) {
             return;
         }
 
@@ -78,8 +66,9 @@ public final class ReminderScheduler extends ListenerAdapter {
             return;
         }
 
+        final var reminderTasks = this.reservationReminder.getReminderTasks();
         final var lines = event.getMessage().getContentStripped().split("\n");
-        final int size = this.reminderTasks.size();
+        final int size = reminderTasks.size();
         final var toBeReserved = Arrays.stream(lines)
                 .map(String::trim)
                 .map(hyphenatedDuration -> this.validate(hyphenatedDuration, ch))
@@ -89,8 +78,8 @@ public final class ReminderScheduler extends ListenerAdapter {
 
         this.lock.set(true);
         this.startScheduling(toBeReserved, ch);
-        if (this.reminderTasks.size() > size) {
-            this.reminderTasks.save();
+        if (reminderTasks.size() > size) {
+            reminderTasks.save();
         }
     }
 
@@ -118,6 +107,7 @@ public final class ReminderScheduler extends ListenerAdapter {
     }
 
     private void startScheduling(final List<DurationContext> durationContexts, final MessageChannelUnion ch) {
+        final var debugProfiler = this.reservationReminder.getDebugProfiler();
         final int size = durationContexts.size();
         ch.sendMessage(PROGRESS_TEXT_UPDATER.apply(0, size))
                 .map(it -> {
@@ -128,7 +118,7 @@ public final class ReminderScheduler extends ListenerAdapter {
                     for (int i = 0; i < size; i++) {
                         try {
                             final var result = this.trySchedule(durationContexts.get(i));
-                            this.debugProfiler.appendLine("Result: " + result);
+                            debugProfiler.appendLine("Result: " + result);
                             results.add(result);
 
                             it.editMessage(PROGRESS_TEXT_UPDATER.apply(i + 1, size)
@@ -138,7 +128,7 @@ public final class ReminderScheduler extends ListenerAdapter {
                             limiter.acquire();
                         } catch (QueryFailedException e) {
                             System.err.println("Error occurred while trying to schedule: " + e.getMessage());
-                            this.debugProfiler.appendLine("Latest Exception: " + e.getMessage());
+                            debugProfiler.appendLine("Latest Exception: " + e.getMessage());
                             throw e;
                         }
                     }
@@ -153,15 +143,21 @@ public final class ReminderScheduler extends ListenerAdapter {
     }
 
     private String trySchedule(final DurationContext ctx) {
-        this.debugProfiler.start();
-        this.debugProfiler.appendLine("Input line: " + ctx.hyphenatedDuration());
-        this.debugProfiler.appendLine("Parsed value: " + ctx.start().format(FORMATTER) + "-" + ctx.end().format(TIME_FORMATTER));
+        final var debugProfiler = this.reservationReminder.getDebugProfiler();
+        debugProfiler.start();
+        debugProfiler.appendLine("Input line: " + ctx.hyphenatedDuration());
+        debugProfiler.appendLine("Parsed value: " + ctx.start().format(FORMATTER) + "-" + ctx.end().format(TIME_FORMATTER));
 
-        final var reservations = this.getCampusWeb().queryRoomReservation(ROOM, ctx.start().toLocalDate(), this.debugProfiler);
+        final var reservations = this.getCampusWeb().queryRoomReservation(ROOM, ctx.start().toLocalDate(), debugProfiler);
         final var reservation = reservations.cannotReserve(ctx.start(), ctx.end());
         if (reservation != null) {
             return "## :u6e80: " + ctx.hyphenatedDuration() + "\nこの時間は既に埋まっています。\n理由: " + reservation.reason() + "\n時間: " + reservation.startTime().format(TIME_TO_STRING) + "-" + reservation.endTime().format(TIME_TO_STRING);
         }
+
+        final var jda = this.reservationReminder.getJDA();
+        final var channelId = this.reservationReminder.getChannelId();
+        final var roleId = this.reservationReminder.getRoleId();
+        final var reminderTasks = this.reservationReminder.getReminderTasks();
 
         final var firstReminderTime = HolidayRegistry.INSTANCE
                 .getBusinessDayAfter(ctx.start().toLocalDate(), -2)
@@ -172,17 +168,17 @@ public final class ReminderScheduler extends ListenerAdapter {
         final var id = UUID.randomUUID();
 
         final var task = TwiceRemindTask.TwiceRemindTaskBuilder
-                .of(this.jda, this.channelId, ctx.hyphenatedDuration())
+                .of(jda, channelId, ctx.hyphenatedDuration())
                 .start()
                 .remindAt(firstReminderTime)
-                .withMessage(FriendlyReminderMessage.First.mentionEveryoneWhoHas(this.roleId))
+                .withMessage(FriendlyReminderMessage.First.mentionEveryoneWhoHas(roleId))
                 .then()
                 .remindAt(secondReminderTime)
-                .withMessage(FriendlyReminderMessage.Second.mentionEveryoneWhoHas(this.roleId))
+                .withMessage(FriendlyReminderMessage.Second.mentionEveryoneWhoHas(roleId))
                 .finish()
                 .build();
 
-        this.reminderTasks.add(id, task);
+        reminderTasks.add(id, task);
         return "## :white_check_mark: " + ctx.hyphenatedDuration() + "\nこの時間は予約できます（現在時点）。\nリマインドを登録しました:\n" + task + "\n- リマインドID: `" + id + "`";
     }
 

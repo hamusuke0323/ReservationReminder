@@ -45,7 +45,7 @@ public final class Reminder {
         return new Reminder(this.jda, this.channelId, this.message, remindTime);
     }
 
-    public void send() {
+    private void send() {
         this.executor.shutdownNow();
         this.done.set(true);
 
