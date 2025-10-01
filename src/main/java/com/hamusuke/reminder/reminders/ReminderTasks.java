@@ -8,6 +8,7 @@ import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEve
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -22,10 +23,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
-public final class ReminderTasks {
+public final class ReminderTasks implements Closeable {
     private static final String SAVE_FILE_NAME = "reservation_reminders.json";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().excludeFieldsWithoutExposeAnnotation().create();
-    private static final ScheduledExecutorService AUTO_SAVER = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "Task Remover Thread"));
+    private final ScheduledExecutorService autoSaver = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "Auto Save Thread"));
     private final AtomicBoolean autoSaverStarted = new AtomicBoolean();
     private final Map<UUID, TwiceRemindTask> tasks = Maps.newConcurrentMap();
 
@@ -83,7 +84,7 @@ public final class ReminderTasks {
         }
 
         this.autoSaverStarted.set(true);
-        AUTO_SAVER.scheduleAtFixedRate(this::save, 1L, 1L, TimeUnit.HOURS);
+        this.autoSaver.scheduleAtFixedRate(this::save, 1L, 1L, TimeUnit.HOURS);
     }
 
     public UUID validateAndFind(final SlashCommandInteractionEvent event, final String uuidStr) {
@@ -103,7 +104,7 @@ public final class ReminderTasks {
         return uuid;
     }
 
-    public synchronized void load(final Function<JsonObject, TwiceRemindTask> factory) {
+    public synchronized void load(final Function<JsonObject, TwiceRemindTask> parser) {
         final var file = new File(SAVE_FILE_NAME);
         if (!file.exists()) {
             return;
@@ -117,7 +118,7 @@ public final class ReminderTasks {
 
             for (final var e : obj.entrySet()) {
                 final var id = UUID.fromString(e.getKey());
-                this.tasks.put(id, factory.apply(e.getValue().getAsJsonObject()));
+                this.tasks.put(id, parser.apply(e.getValue().getAsJsonObject()));
             }
         } catch (Exception e) {
             System.err.println("Failed to load reservation reminders: " + e.getMessage());
@@ -138,5 +139,10 @@ public final class ReminderTasks {
         } catch (Exception e) {
             System.err.println("Failed to save reservation reminders: " + e.getMessage());
         }
+    }
+
+    @Override
+    public void close() {
+        this.autoSaver.shutdownNow();
     }
 }

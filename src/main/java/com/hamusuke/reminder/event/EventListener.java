@@ -2,8 +2,8 @@ package com.hamusuke.reminder.event;
 
 import com.hamusuke.reminder.ReservationReminder;
 import com.hamusuke.reminder.command.CommandContext;
-import com.hamusuke.reminder.reminders.FriendlyReminderMessage;
 import com.hamusuke.reminder.reminders.TwiceRemindTask;
+import com.hamusuke.reminder.reminders.message.MentionedReminderMessage;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
@@ -26,11 +26,11 @@ public final class EventListener extends ListenerAdapter {
 
     @Override
     public void onReady(@NotNull ReadyEvent event) {
-        this.reservationReminder.getReminderTasks().load(o ->
-                TwiceRemindTask.from(o, this.reservationReminder.getJDA(),
+        this.reservationReminder.getReminderTasks().load(jsonObject ->
+                TwiceRemindTask.from(jsonObject, this.reservationReminder.getJDA(),
                         this.reservationReminder.getChannelId(),
-                        FriendlyReminderMessage.First.mentionEveryoneWhoHas(this.reservationReminder.getRoleId()),
-                        FriendlyReminderMessage.Second.mentionEveryoneWhoHas(this.reservationReminder.getRoleId())));
+                        MentionedReminderMessage.First.forMemberWithRole(this.reservationReminder.getRoleId()),
+                        MentionedReminderMessage.Second.forMemberWithRole(this.reservationReminder.getRoleId())));
 
         this.reservationReminder.getReminderTasks().startAutoSaveThread();
     }

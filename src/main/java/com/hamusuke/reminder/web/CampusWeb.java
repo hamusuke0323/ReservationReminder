@@ -11,6 +11,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 
 import javax.annotation.Nullable;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.*;
 import java.net.http.HttpClient;
@@ -27,7 +28,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-public final class CampusWeb implements AutoCloseable {
+public final class CampusWeb implements Closeable {
     private static final URI HOST;
     private static final String MID_PATH = "campusweb";
     private static final String PORTAL_PATH = MID_PATH + "/campusportal.do";

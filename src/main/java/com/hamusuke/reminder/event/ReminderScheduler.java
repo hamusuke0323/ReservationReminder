@@ -3,8 +3,8 @@ package com.hamusuke.reminder.event;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.RateLimiter;
 import com.hamusuke.reminder.ReservationReminder;
-import com.hamusuke.reminder.reminders.FriendlyReminderMessage;
 import com.hamusuke.reminder.reminders.TwiceRemindTask;
+import com.hamusuke.reminder.reminders.message.MentionedReminderMessage;
 import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.util.DiscordChatFormatUtil;
 import com.hamusuke.reminder.util.HolidayRegistry;
@@ -171,10 +171,10 @@ public final class ReminderScheduler extends ListenerAdapter {
                 .of(jda, channelId, ctx.hyphenatedDuration())
                 .start()
                 .remindAt(firstReminderTime)
-                .withMessage(FriendlyReminderMessage.First.mentionEveryoneWhoHas(roleId))
+                .withMessage(MentionedReminderMessage.First.forMemberWithRole(roleId))
                 .then()
                 .remindAt(secondReminderTime)
-                .withMessage(FriendlyReminderMessage.Second.mentionEveryoneWhoHas(roleId))
+                .withMessage(MentionedReminderMessage.Second.forMemberWithRole(roleId))
                 .finish()
                 .build();
 

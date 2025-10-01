@@ -6,6 +6,7 @@ import com.hamusuke.reminder.event.ReminderScheduler;
 import com.hamusuke.reminder.modal.Modals;
 import com.hamusuke.reminder.profiler.DebugProfiler;
 import com.hamusuke.reminder.reminders.ReminderTasks;
+import com.hamusuke.reminder.util.Util;
 import com.hamusuke.reminder.web.CampusWeb;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
@@ -35,7 +36,11 @@ public final class ReservationReminder {
                         new ReminderScheduler(this))
                 .build();
         this.jda.updateCommands().addCommands(this.commands.getDispatcher().getAllCommandData()).queue();
-        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "Reservation Reminder Shutdown Thread"));
+        Runtime.getRuntime().addShutdownHook(
+                Util.make(new Thread(this::shutdown, "Reservation Reminder Shutdown Thread"),
+                        thread -> thread.setUncaughtExceptionHandler(
+                                (t, e) ->
+                                        System.err.println("An error occurred while shutting down the program: " + e.getMessage()))));
     }
 
     private void shutdown() {
@@ -48,6 +53,8 @@ public final class ReservationReminder {
         System.out.println("Done");
 
         System.out.println("Shutting down...");
+        this.closeCampusWebAndNullify();
+        this.reminderTasks.close();
         this.jda.shutdown();
         System.out.println("Done");
     }

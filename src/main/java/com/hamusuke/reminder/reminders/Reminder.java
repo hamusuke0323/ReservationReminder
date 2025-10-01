@@ -1,5 +1,6 @@
 package com.hamusuke.reminder.reminders;
 
+import com.hamusuke.reminder.reminders.message.FriendlyReminderMessage;
 import com.hamusuke.reminder.util.DiscordChatFormatUtil;
 import net.dv8tion.jda.api.JDA;
 
@@ -34,7 +35,13 @@ public final class Reminder {
             return;
         }
 
-        this.executor.schedule(this::send, delay, TimeUnit.SECONDS);
+        this.executor.schedule(() -> {
+            try {
+                this.send();
+            } catch (Throwable t) {
+                System.err.println("Error occurred while sending reminder: " + t.getMessage());
+            }
+        }, delay, TimeUnit.SECONDS);
     }
 
     public static Reminder parse(final String dateTime, final JDA jda, final String channelId, final FriendlyReminderMessage message) {

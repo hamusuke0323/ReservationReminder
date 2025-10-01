@@ -3,6 +3,7 @@ package com.hamusuke.reminder.reminders;
 import com.google.common.collect.Lists;
 import com.google.gson.JsonObject;
 import com.google.gson.stream.JsonWriter;
+import com.hamusuke.reminder.reminders.message.FriendlyReminderMessage;
 import net.dv8tion.jda.api.JDA;
 
 import java.io.IOException;
