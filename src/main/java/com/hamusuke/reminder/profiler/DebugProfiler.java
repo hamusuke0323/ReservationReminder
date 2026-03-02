@@ -3,7 +3,17 @@ package com.hamusuke.reminder.profiler;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
-public final class DebugProfiler {
+public class DebugProfiler {
+    public static final DebugProfiler EMPTY = new DebugProfiler() {
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void appendLine(String line) {
+        }
+    };
+
     private final StringBuilder builder = new StringBuilder();
 
     public void start() {

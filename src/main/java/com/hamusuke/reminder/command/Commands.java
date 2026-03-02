@@ -12,6 +12,7 @@ public final class Commands {
         this.dispatcher.register(LoginCommand.INSTANCE);
         this.dispatcher.register(LogoutCommand.INSTANCE);
         this.dispatcher.register(DebugCommand.INSTANCE);
+        this.dispatcher.register(RecheckCommand.INSTANCE);
     }
 
     public CommandDispatcher getDispatcher() {

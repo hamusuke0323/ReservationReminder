@@ -9,6 +9,7 @@ import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.util.DiscordChatFormatUtil;
 import com.hamusuke.reminder.util.HolidayRegistry;
 import com.hamusuke.reminder.web.CampusWeb;
+import com.hamusuke.reminder.web.reservation.DurationContext;
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
@@ -16,9 +17,7 @@ import net.dv8tion.jda.internal.utils.tuple.Pair;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -48,6 +47,18 @@ public final class ReminderScheduler extends ListenerAdapter {
         this.reservationReminder = reservationReminder;
     }
 
+    private static Optional<DurationContext> validate(final String hyphenatedDuration, final MessageChannelUnion ch) {
+        try {
+            return Optional.of(DurationContext.from(hyphenatedDuration));
+        } catch (DurationContext.InvalidFormatException e) {
+            ch.sendMessage(":ng: 不正なフォーマットです: " + hyphenatedDuration + "\n例: 2025/8/21 10:00-12:00").queue();
+        } catch (DurationContext.InvalidDurationException e) {
+            ch.sendMessage(":ng: 不正な日時の範囲です: " + hyphenatedDuration).queue();
+        }
+
+        return Optional.empty();
+    }
+
     @Override
     public synchronized void onMessageReceived(@NotNull MessageReceivedEvent event) {
         final var channelId = this.reservationReminder.getChannelId();
@@ -71,7 +82,7 @@ public final class ReminderScheduler extends ListenerAdapter {
         final int size = reminderTasks.size();
         final var toBeReserved = Arrays.stream(lines)
                 .map(String::trim)
-                .map(hyphenatedDuration -> this.validate(hyphenatedDuration, ch))
+                .map(hyphenatedDuration -> validate(hyphenatedDuration, ch))
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .toList();
@@ -81,29 +92,6 @@ public final class ReminderScheduler extends ListenerAdapter {
         if (reminderTasks.size() > size) {
             reminderTasks.save();
         }
-    }
-
-    private Optional<DurationContext> validate(final String hyphenatedDuration, final MessageChannelUnion ch) {
-        final var dateTime = hyphenatedDuration.split("-");
-        if (dateTime.length != 2) {
-            ch.sendMessage(":ng: 不正なフォーマットです: " + hyphenatedDuration + "\n例: 2025/8/21 10:00-12:00").queue();
-            return Optional.empty();
-        }
-
-        try {
-            final var start = LocalDateTime.parse(dateTime[0], FORMATTER);
-            final var end = LocalDateTime.of(start.toLocalDate(), LocalTime.parse(dateTime[1], TIME_FORMATTER));
-            if (start.isAfter(end)) {
-                ch.sendMessage(":ng: 不正な日時の範囲です: " + hyphenatedDuration).queue();
-                return Optional.empty();
-            }
-
-            return Optional.of(new DurationContext(hyphenatedDuration, start, end));
-        } catch (DateTimeParseException e) {
-            ch.sendMessage(":ng: 不正なフォーマットです: " + hyphenatedDuration + "\n例: 2025/8/21 10:00-12:00").queue();
-        }
-
-        return Optional.empty();
     }
 
     private void startScheduling(final List<DurationContext> durationContexts, final MessageChannelUnion ch) {
@@ -188,8 +176,5 @@ public final class ReminderScheduler extends ListenerAdapter {
 
     public boolean isNotLoggedIn() {
         return this.reservationReminder.getCampusWeb().isEmpty();
-    }
-
-    private record DurationContext(String hyphenatedDuration, LocalDateTime start, LocalDateTime end) {
     }
 }
