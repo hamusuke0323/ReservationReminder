@@ -65,7 +65,7 @@ public record RoomReservations(String roomName, List<RoomReservation> reservatio
      * @return reservation or null if we can reserve
      */
     @Nullable
-    public RoomReservation cannotReserve(final LocalDateTime start, final LocalDateTime end) {
+    public RoomReservation findOtherReservation(final LocalDateTime start, final LocalDateTime end) {
         for (final var reservation : this.reservations) {
             if (reservation.cannotReserve(start, end)) {
                 return reservation;

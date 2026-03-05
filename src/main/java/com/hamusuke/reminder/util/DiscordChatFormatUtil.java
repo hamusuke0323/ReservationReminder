@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 public class DiscordChatFormatUtil {
-    public static String toMentionFormat(final String roleId) {
+    public static String toRoleMentionFormat(final String roleId) {
         return "<@&" + roleId + ">";
     }
 

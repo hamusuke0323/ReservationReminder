@@ -1,14 +1,14 @@
 package com.hamusuke.reminder.throwable;
 
-public class QueryFailedException extends RuntimeException {
+public final class QueryFailedException extends RuntimeException {
     public QueryFailedException() {
     }
 
-    public QueryFailedException(Throwable cause) {
+    public QueryFailedException(final Throwable cause) {
         super(cause);
     }
 
-    public QueryFailedException(String message) {
+    public QueryFailedException(final String message) {
         super(message);
     }
 }

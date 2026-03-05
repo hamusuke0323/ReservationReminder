@@ -1,20 +1,24 @@
 package com.hamusuke.reminder.event;
 
 import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.RateLimiter;
 import com.hamusuke.reminder.ReservationReminder;
 import com.hamusuke.reminder.reminders.TwiceRemindTask;
 import com.hamusuke.reminder.reminders.message.MentionedReminderMessage;
+import com.hamusuke.reminder.throwable.InvalidDurationException;
+import com.hamusuke.reminder.throwable.InvalidDurationFormatException;
 import com.hamusuke.reminder.throwable.QueryFailedException;
 import com.hamusuke.reminder.util.DiscordChatFormatUtil;
 import com.hamusuke.reminder.util.HolidayRegistry;
 import com.hamusuke.reminder.web.CampusWeb;
 import com.hamusuke.reminder.web.reservation.DurationContext;
+import com.hamusuke.reminder.web.reservation.RateLimitedRoomReservationRetriever;
+import com.hamusuke.reminder.web.reservation.RoomReservation;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import net.dv8tion.jda.internal.utils.tuple.Pair;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -22,15 +26,15 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
+import static com.hamusuke.reminder.web.reservation.DurationContext.FORMATTER;
+import static com.hamusuke.reminder.web.reservation.DurationContext.TIME_FORMATTER;
+
 public final class ReminderScheduler extends ListenerAdapter {
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/M/d H:mm");
-    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("H:mm");
     private static final DateTimeFormatter TIME_TO_STRING = DateTimeFormatter.ofPattern("HH:mm");
-    private static final String ROOM = "F1会議室";
     private static final long CAMPUS_WEB_ACCESS_INTERVAL = 10L;
     private static final String RESERVATION_CHECKING_PROGRESS_PREFIX = "予約できるか確認しています... ";
     private static final String RESERVATION_CHECKING_PROGRESS = RESERVATION_CHECKING_PROGRESS_PREFIX + "%.1f%% (%d / %d)";
@@ -41,7 +45,6 @@ public final class ReminderScheduler extends ListenerAdapter {
         return "インターバル... " + DiscordChatFormatUtil.toTimestampRelative(intervalEndsAt) + "に再開";
     };
     private final ReservationReminder reservationReminder;
-    private final AtomicBoolean lock = new AtomicBoolean();
 
     public ReminderScheduler(final ReservationReminder reservationReminder) {
         this.reservationReminder = reservationReminder;
@@ -50,9 +53,9 @@ public final class ReminderScheduler extends ListenerAdapter {
     private static Optional<DurationContext> validate(final String hyphenatedDuration, final MessageChannelUnion ch) {
         try {
             return Optional.of(DurationContext.from(hyphenatedDuration));
-        } catch (DurationContext.InvalidFormatException e) {
+        } catch (InvalidDurationFormatException e) {
             ch.sendMessage(":ng: 不正なフォーマットです: " + hyphenatedDuration + "\n例: 2025/8/21 10:00-12:00").queue();
-        } catch (DurationContext.InvalidDurationException e) {
+        } catch (InvalidDurationException e) {
             ch.sendMessage(":ng: 不正な日時の範囲です: " + hyphenatedDuration).queue();
         }
 
@@ -72,11 +75,6 @@ public final class ReminderScheduler extends ListenerAdapter {
             return;
         }
 
-        if (this.lock.get()) {
-            ch.sendMessage("処理が完了するまでお待ちください...").queue();
-            return;
-        }
-
         final var reminderTasks = this.reservationReminder.getReminderTasks();
         final var lines = event.getMessage().getContentStripped().split("\n");
         final int size = reminderTasks.size();
@@ -87,7 +85,6 @@ public final class ReminderScheduler extends ListenerAdapter {
                 .map(Optional::get)
                 .toList();
 
-        this.lock.set(true);
         this.startScheduling(toBeReserved, ch);
         if (reminderTasks.size() > size) {
             reminderTasks.save();
@@ -95,51 +92,45 @@ public final class ReminderScheduler extends ListenerAdapter {
     }
 
     private void startScheduling(final List<DurationContext> durationContexts, final MessageChannelUnion ch) {
+        if (this.isNotLoggedIn()) {
+            return;
+        }
+
         final var debugProfiler = this.reservationReminder.getDebugProfiler();
-        final int size = durationContexts.size();
-        ch.sendMessage(PROGRESS_TEXT_UPDATER.apply(0, size))
-                .map(it -> {
-                    final var limiter = RateLimiter.create(1.0D / CAMPUS_WEB_ACCESS_INTERVAL);
-                    limiter.acquire();
+        final List<String> results = Lists.newArrayList();
+        final AtomicReference<Message> message = new AtomicReference<>();
 
-                    final List<String> results = Lists.newArrayList();
-                    for (int i = 0; i < size; i++) {
-                        try {
-                            final var result = this.trySchedule(durationContexts.get(i));
-                            debugProfiler.appendLine("Result: " + result);
-                            results.add(result);
+        RateLimitedRoomReservationRetriever.startRetrievingBlocking(durationContexts, this.getCampusWeb(), debugProfiler, (cur, total) -> {
+            if (message.get() != null) {
+                message.get().editMessage(PROGRESS_TEXT_UPDATER.apply(cur, total)
+                                + "\n"
+                                + INTERVAL_TEXT_FACTORY.get())
+                        .queue();
+                return;
+            }
 
-                            it.editMessage(PROGRESS_TEXT_UPDATER.apply(i + 1, size)
-                                            + "\n"
-                                            + INTERVAL_TEXT_FACTORY.get())
-                                    .queue();
-                            limiter.acquire();
-                        } catch (QueryFailedException e) {
-                            System.err.println("Error occurred while trying to schedule: " + e.getMessage());
-                            debugProfiler.appendLine("Latest Exception: " + e.getMessage());
-                            throw e;
-                        }
-                    }
-
-                    return Pair.of(results, it);
-                })
-                .queue(pair -> {
-                    this.lock.set(false);
-                    pair.getLeft().forEach(result -> ch.sendMessage(result).queue());
-                    pair.getRight().editMessage(RESERVATION_CHECKING_PROGRESS_PREFIX + "完了").queue();
-                }, t -> ch.sendMessage("処理中にエラーが発生しました。").queue());
+            final var msg = ch.sendMessage(PROGRESS_TEXT_UPDATER.apply(cur, total)).complete();
+            message.set(msg);
+        }, (ctx, other) -> {
+            final var result = this.trySchedule(ctx, other);
+            debugProfiler.appendLine("Result: " + result);
+            results.add(result);
+        }, () -> {
+            results.forEach(result -> ch.sendMessage(result).queue());
+            if (message.get() != null) {
+                message.get().editMessage(RESERVATION_CHECKING_PROGRESS_PREFIX + "完了").queue();
+            }
+        }, e -> ch.sendMessage(e).queue());
     }
 
-    private String trySchedule(final DurationContext ctx) {
+    private String trySchedule(final DurationContext ctx, final @Nullable RoomReservation otherReservation) {
         final var debugProfiler = this.reservationReminder.getDebugProfiler();
         debugProfiler.start();
         debugProfiler.appendLine("Input line: " + ctx.hyphenatedDuration());
         debugProfiler.appendLine("Parsed value: " + ctx.start().format(FORMATTER) + "-" + ctx.end().format(TIME_FORMATTER));
 
-        final var reservations = this.getCampusWeb().queryRoomReservation(ROOM, ctx.start().toLocalDate(), debugProfiler);
-        final var reservation = reservations.cannotReserve(ctx.start(), ctx.end());
-        if (reservation != null) {
-            return "## :u6e80: " + ctx.hyphenatedDuration() + "\nこの時間は既に埋まっています。\n理由: " + reservation.reason() + "\n時間: " + reservation.startTime().format(TIME_TO_STRING) + "-" + reservation.endTime().format(TIME_TO_STRING);
+        if (otherReservation != null) {
+            return "## :u6e80: " + ctx.hyphenatedDuration() + "\nこの時間は既に埋まっています。\n理由: " + otherReservation.reason() + "\n時間: " + otherReservation.startTime().format(TIME_TO_STRING) + "-" + otherReservation.endTime().format(TIME_TO_STRING);
         }
 
         final var jda = this.reservationReminder.getJDA();
