@@ -14,7 +14,7 @@ public final class Main {
         final var channelId = EnvLoader.getEnv(CHANNEL_ID_KEY);
         final var roleId = EnvLoader.getEnv(ROLE_ID_KEY);
 
-        if (token == null || channelId == null || roleId == null) {
+        if (token == null || channelId == null || roleId == null || token.isBlank() || channelId.isBlank() || roleId.isBlank()) {
             System.err.printf("%s, %s and %s is not set in .env file.\n", TOKEN_KEY, CHANNEL_ID_KEY, ROLE_ID_KEY);
             EnvLoader.make(Set.of(TOKEN_KEY, CHANNEL_ID_KEY, ROLE_ID_KEY));
             return;
