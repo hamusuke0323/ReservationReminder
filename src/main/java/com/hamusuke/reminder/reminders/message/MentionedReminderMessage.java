@@ -6,7 +6,7 @@ public class MentionedReminderMessage implements FriendlyReminderMessage {
     private final String formattedMessage;
 
     public MentionedReminderMessage(final String roleId, final String message) {
-        this.formattedMessage = DiscordChatFormatUtil.toMentionFormat(roleId) + " " + message;
+        this.formattedMessage = DiscordChatFormatUtil.toRoleMentionFormat(roleId) + " " + message;
     }
 
     @Override

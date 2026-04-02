@@ -1,6 +1,6 @@
 package com.hamusuke.reminder.throwable;
 
-public class LoginFailedException extends RuntimeException {
+public final class LoginFailedException extends RuntimeException {
     public LoginFailedException() {
     }
 
