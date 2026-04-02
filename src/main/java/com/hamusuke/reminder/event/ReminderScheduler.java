@@ -36,6 +36,7 @@ import static com.hamusuke.reminder.web.reservation.DurationContext.TIME_FORMATT
 public final class ReminderScheduler extends ListenerAdapter {
     private static final DateTimeFormatter TIME_TO_STRING = DateTimeFormatter.ofPattern("HH:mm");
     private static final long CAMPUS_WEB_ACCESS_INTERVAL = 10L;
+    private static final int BUSINESS_DAYS_BEFORE_RESERVATION = 3;
     private static final String RESERVATION_CHECKING_PROGRESS_PREFIX = "予約できるか確認しています... ";
     private static final String RESERVATION_CHECKING_PROGRESS = RESERVATION_CHECKING_PROGRESS_PREFIX + "%.1f%% (%d / %d)";
     private static final BiFunction<Integer, Integer, String> PROGRESS_TEXT_UPDATER = (cur, size) ->
@@ -139,7 +140,7 @@ public final class ReminderScheduler extends ListenerAdapter {
         final var reminderTasks = this.reservationReminder.getReminderTasks();
 
         final var firstReminderTime = HolidayRegistry.INSTANCE
-                .getBusinessDayAfter(ctx.start().toLocalDate(), -2)
+                .getBusinessDayAfter(ctx.start().toLocalDate(), -BUSINESS_DAYS_BEFORE_RESERVATION)
                 .atTime(9, 0);
         final var secondReminderTime = HolidayRegistry.INSTANCE
                 .getBusinessDayAfter(firstReminderTime.toLocalDate(), 1)
